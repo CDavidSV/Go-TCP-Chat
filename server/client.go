@@ -1,7 +1,11 @@
 package main
 
 import (
+	"bufio"
 	"net"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/uuid"
 )
@@ -13,6 +17,7 @@ type Client struct {
 	channel  *Channel
 	server   *Server
 	send     chan string
+	mu       sync.RWMutex
 }
 
 func NewClient(conn net.Conn, server *Server, name string) *Client {
@@ -23,4 +28,91 @@ func NewClient(conn net.Conn, server *Server, name string) *Client {
 		server:   server,
 		send:     make(chan string, 512), // Buffered channel to prevent blocking
 	}
+}
+
+func (c *Client) Read() {
+	reader := bufio.NewReader(c.conn)
+	for {
+		c.conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
+		msg, err := reader.ReadString('\n')
+		if err != nil {
+			if err.Error() != "EOF" {
+				c.server.logger.Error("Error reading from client", "client_id", c.ID, "error", err)
+				return
+			}
+			continue
+		}
+		msg = strings.TrimSpace(strings.ToLower(msg))
+		if strings.HasPrefix(msg, "/") {
+			args := strings.Fields(msg[1:])
+			if len(args) == 0 {
+				c.SendMessage("No command provided.")
+				continue // Continue listening for messages
+			}
+
+			c.server.command <- Command{
+				Client: c,
+				Args:   args,
+				Name:   args[0],
+			}
+			continue
+		}
+
+		// Regular message
+		channel := c.GetChannel()
+		if channel == nil {
+			c.SendMessage("You are not in a channel. Use /join <channel> to join one.")
+			continue
+		}
+
+		c.server.broadcastMessage(c, channel, msg)
+	}
+}
+
+func (c *Client) Write() {
+	defer func() {
+		c.conn.Close()
+	}()
+
+	for msg := range c.send {
+		c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+		_, err := c.conn.Write([]byte(msg + "\n"))
+		if err != nil {
+			c.server.logger.Error("Error writing to client", "client_id", c.ID, "error", err)
+			return // Error writing to connection
+		}
+	}
+}
+
+func (c *Client) SendMessage(msg string) {
+	select {
+	case c.send <- msg:
+	default:
+		// If the send buffer is full, drop the message to avoid blocking
+		c.server.logger.Warn("Send buffer full, dropping message", "client_id", c.ID)
+	}
+}
+
+func (c *Client) SetUsername(newName string) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.Username = newName
+}
+
+func (c *Client) GetUsername() string {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.Username
+}
+
+func (c *Client) GetChannel() *Channel {
+	c.mu.RLock()
+	defer c.mu.RUnlock()
+	return c.channel
+}
+
+func (c *Client) SetChannel(ch *Channel) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	c.channel = ch
 }

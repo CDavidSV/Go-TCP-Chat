@@ -2,6 +2,7 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"log/slog"
 	"net"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 type Server struct {
 	clients    map[string]*Client
 	channels   map[string]*Channel
+	commands   map[string]CommandFunc
 	command    chan Command
 	register   chan *Client
 	unregister chan *Client
@@ -59,15 +61,70 @@ func (s *Server) run() {
 		select {
 		case client := <-s.register:
 			// Handle new client registration
+			s.clients[client.ID] = client
+			s.logger.Info("Client connected", "client_id", client.ID, "ip", client.conn.RemoteAddr().String(), "total_clients", len(s.clients))
+
+			// Start reader and writer goroutines for the client
+			s.wg.Add(1)
+			go func() {
+				defer s.wg.Done()
+				client.Read()
+			}()
+			s.wg.Add(1)
+			go func() {
+				defer s.wg.Done()
+				client.Write()
+			}()
 		case client := <-s.unregister:
 			// Handle client unregistration
-		case msg := <-s.broadcast:
-			// Handle broadcasting messages to clients
+			clientChannel := client.GetChannel()
+			if clientChannel != nil {
+				clientChannel.RemoveMember(client)
+				s.broadcastMessage(client, clientChannel, fmt.Sprintf("[Server]: %s has left the channel.", client.Username))
+				if len(clientChannel.members) == 0 {
+					delete(s.channels, clientChannel.Name)
+				}
+			}
+
+			delete(s.clients, client.ID)
+			close(client.send)
+			s.logger.Info("Client disconnected", "client_id", client.ID, "ip", client.conn.RemoteAddr().String(), "total_clients", len(s.clients))
 		case cmd := <-s.command:
 			// Handle commands from clients
+			if cmdFunc, exists := s.commands[cmd.Name]; exists {
+				cmdFunc(cmd.Name, cmd.Args, cmd.Client, s) // Execute command if found
+			} else {
+				cmd.Client.SendMessage("[Server]: Unknown command. Type /help for a list of commands.")
+			}
+		case msg := <-s.broadcast:
+			// Handle broadcasting messages to clients
+			if msg.Channel == nil {
+				// Broadcast message to all clients if no channel is specified
+				for _, client := range s.clients {
+					if msg.Sender != client { // Avoid sending the message back to the sender if any is provided
+						client.SendMessage(msg.Content)
+					}
+				}
+				continue
+			}
+
+			for _, member := range msg.Channel.members {
+				if msg.Sender != member { // Avoid sending the message back to the sender if any is provided
+					member.SendMessage(msg.Content)
+				}
+			}
 		case <-s.shutdown:
 			// Handle server shutdown
-			return
+			if !s.stopped {
+				for _, client := range s.clients {
+					client.conn.Close()
+				}
+				s.stopped = true
+			}
+
+			if len(s.clients) == 0 {
+				return // Exit if no clients are connected
+			}
 		}
 	}
 }
@@ -114,15 +171,17 @@ func (s *Server) Start() {
 	s.logger.Info("Shutting down server...")
 	listener.Close()
 
-	s.broadcastMessage(Message{
-		Content: "Server is shutting down. Disconnecting...",
-	})
+	s.broadcastMessage(nil, nil, "Server is shutting down. Disconnecting...")
 
 	close(s.shutdown) // Signal shutdown to all goroutines
 	s.wg.Wait()       // Wait for all goroutines to finish
 	s.logger.Info("Server has shut down.")
 }
 
-func (s *Server) broadcastMessage(msg Message) {
-
+func (s *Server) broadcastMessage(client *Client, channel *Channel, msg string) {
+	s.broadcast <- Message{
+		Sender:  client,
+		Channel: channel,
+		Content: msg,
+	}
 }
