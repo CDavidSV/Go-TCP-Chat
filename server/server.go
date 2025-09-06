@@ -38,6 +38,7 @@ func NewServer(address, port string) *Server {
 	server := &Server{
 		clients:    make(map[string]*Client),
 		channels:   make(map[string]*Channel),
+		commands:   make(map[string]CommandFunc),
 		command:    make(chan Command),
 		register:   make(chan *Client),
 		unregister: make(chan *Client),
@@ -53,7 +54,6 @@ func NewServer(address, port string) *Server {
 }
 
 func (s *Server) run() {
-	s.wg.Add(1)
 	defer s.wg.Done()
 
 	// TODO: Implement main event loop
@@ -130,6 +130,7 @@ func (s *Server) run() {
 }
 
 func (s *Server) Start() {
+	s.wg.Add(1)
 	go s.run()
 
 	// Use hostname:port for net.Listen, not the URL string

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"errors"
 	"net"
 	"strings"
 	"sync"
@@ -31,20 +32,30 @@ func NewClient(conn net.Conn, server *Server, name string) *Client {
 }
 
 func (c *Client) Read() {
+	defer func() {
+		c.server.unregister <- c
+		c.conn.Close()
+	}()
+
 	reader := bufio.NewReader(c.conn)
 	for {
 		c.conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 		msg, err := reader.ReadString('\n')
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return // Connection closed
+			}
+
 			if err.Error() != "EOF" {
 				c.server.logger.Error("Error reading from client", "client_id", c.ID, "error", err)
 				return
 			}
 			continue
 		}
+
 		msg = strings.TrimSpace(strings.ToLower(msg))
-		if strings.HasPrefix(msg, "/") {
-			args := strings.Fields(msg[1:])
+		if after, ok := strings.CutPrefix(msg, "/"); ok {
+			args := strings.Fields(after)
 			if len(args) == 0 {
 				c.SendMessage("No command provided.")
 				continue // Continue listening for messages
@@ -52,7 +63,7 @@ func (c *Client) Read() {
 
 			c.server.command <- Command{
 				Client: c,
-				Args:   args,
+				Args:   args[1:],
 				Name:   args[0],
 			}
 			continue
@@ -78,6 +89,10 @@ func (c *Client) Write() {
 		c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
 		_, err := c.conn.Write([]byte(msg + "\n"))
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return // Connection closed
+			}
+
 			c.server.logger.Error("Error writing to client", "client_id", c.ID, "error", err)
 			return // Error writing to connection
 		}

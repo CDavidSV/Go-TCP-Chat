@@ -1,5 +1,10 @@
 package main
 
+import (
+	"fmt"
+	"strings"
+)
+
 type CommandFunc func(name string, args []string, client *Client, server *Server)
 
 type Command struct {
@@ -8,10 +13,113 @@ type Command struct {
 	Client *Client
 }
 
-func (s *Server) registerCoommand(name string, handler CommandFunc) {
+func joinChannel(name string, args []string, client *Client, server *Server) {
+	if len(args) < 1 {
+		client.SendMessage("[Server]: Usage: /join <channel_name>")
+		return
+	}
+	channelName := args[0]
+	channel, exists := server.channels[channelName]
+	if !exists {
+		channel = NewChannel(channelName)
+		server.channels[channelName] = channel
+	}
 
+	joinedChannel := client.GetChannel()
+
+	if joinedChannel != nil {
+		joinedChannel.RemoveMember(client)
+
+		server.broadcastMessage(client, joinedChannel, fmt.Sprintf("[Server]: %s has left the channel.", client.Username))
+		if len(joinedChannel.members) == 0 {
+			delete(server.channels, joinedChannel.Name)
+		}
+	}
+	channel.AddMember(client)
+	client.SetChannel(channel)
+	server.broadcastMessage(client, channel, fmt.Sprintf("[Server]: %s has joined the channel.", client.Username))
+	client.SendMessage(fmt.Sprintf("[Server]: You have joined channel '%s'", channel.Name))
+}
+
+func leaveChannel(name string, args []string, client *Client, server *Server) {
+	joinedChannel := client.GetChannel()
+
+	if joinedChannel == nil {
+		client.SendMessage("[Server]: You are not in any channel.")
+		return
+	}
+	joinedChannel.RemoveMember(client)
+	server.broadcastMessage(client, joinedChannel, fmt.Sprintf("[Server]: %s has left the channel.", client.Username))
+
+	if len(joinedChannel.members) == 0 {
+		delete(server.channels, joinedChannel.Name)
+	}
+
+	client.SetChannel(nil)
+	client.SendMessage(fmt.Sprintf("[Server]: You have left channel '%s'", joinedChannel.Name))
+}
+
+func connectedClients(name string, args []string, client *Client, server *Server) {
+	client.SendMessage(fmt.Sprintf("[Server]: Connected clients (%d)", len(server.clients)))
+}
+
+func channelMembers(name string, args []string, client *Client, server *Server) {
+	joinedChannel := client.GetChannel()
+
+	if joinedChannel == nil {
+		client.SendMessage("[Server]: You are not in any channel.")
+		return
+	}
+
+	var members []string
+	for _, member := range joinedChannel.members {
+		members = append(members, member.Username)
+	}
+	client.SendMessage(fmt.Sprintf("Members in channel '%s': \n%s", joinedChannel.Name, strings.Join(members, ", ")))
+}
+
+func listChannels(name string, args []string, client *Client, server *Server) {
+	if len(server.channels) == 0 {
+		client.SendMessage("No channels available.")
+		return
+	}
+
+	var channelNames []string
+	for channelName, channel := range server.channels {
+		channelNames = append(channelNames, channelName+fmt.Sprintf(" (%d)", len(channel.members)))
+	}
+	client.SendMessage(fmt.Sprintf("Available channels: \n%s", strings.Join(channelNames, "\n")))
+}
+
+func changeName(name string, args []string, client *Client, server *Server) {
+	if len(args) < 1 {
+		client.SendMessage("[Server]: Usage: /name <new_username>")
+		return
+	}
+
+	newName := args[0]
+	client.Username = newName
+	client.SendMessage(fmt.Sprintf("[Server]: Your username has been changed to '%s'", newName))
+}
+
+func help(name string, args []string, client *Client, server *Server) {
+	helpText := `Available commands:
+/join <channel_name> - Join or create a channel
+/leave - Leave the current channel
+/clients - List all connected clients
+/members - List members in the current channel
+/channels - List all available channels
+/name <new_username> - Change your username`
+
+	client.SendMessage(helpText)
 }
 
 func (s *Server) loadCommands() {
-
+	s.commands["join"] = joinChannel
+	s.commands["leave"] = leaveChannel
+	s.commands["clients"] = connectedClients
+	s.commands["members"] = channelMembers
+	s.commands["channels"] = listChannels
+	s.commands["name"] = changeName
+	s.commands["help"] = help
 }
