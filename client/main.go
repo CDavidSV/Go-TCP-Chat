@@ -4,8 +4,10 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"log"
 	"net"
+	"slices"
 	"strconv"
 	"strings"
 
@@ -16,11 +18,20 @@ import (
 )
 
 var (
-	gap         = "\n\n"
-	host        = "localhost:3000"
-	senderStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
-	serverStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
-	clients     = make(map[string]lipgloss.Style) // clientID -> style color
+	gap           = "\n\n"
+	host          = "localhost:3000"
+	senderStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("5"))
+	serverStyle   = lipgloss.NewStyle().Foreground(lipgloss.Color("2"))
+	clients       = make(map[string]lipgloss.Style) // clientID -> style color
+	slashCommands = []string{
+		"/help",
+		"/name",
+		"/channels",
+		"/join",
+		"/leave",
+		"/members",
+		"/clients",
+	}
 )
 
 type errMsg error
@@ -31,11 +42,13 @@ type Message struct {
 }
 
 type model struct {
-	viewport viewport.Model
-	messages []string
-	textarea textarea.Model
-	conn     net.Conn
-	err      error
+	viewport        viewport.Model
+	messages        []string
+	textarea        textarea.Model
+	conn            net.Conn
+	err             error
+	commandsHistory []string
+	historyIndex    int
 }
 
 func initialModel(c net.Conn) model {
@@ -59,11 +72,13 @@ func initialModel(c net.Conn) model {
 	ta.KeyMap.InsertNewline.SetEnabled(false)
 
 	return model{
-		viewport: vp,
-		textarea: ta,
-		messages: make([]string, 0),
-		conn:     c,
-		err:      nil,
+		viewport:        vp,
+		textarea:        ta,
+		messages:        make([]string, 0),
+		conn:            c,
+		commandsHistory: make([]string, 0),
+		historyIndex:    0,
+		err:             nil,
 	}
 }
 
@@ -106,7 +121,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyCtrlC, tea.KeyEsc:
 			return m, tea.Quit
 		case tea.KeyEnter:
-			_, err := m.conn.Write([]byte(m.textarea.Value() + "\n"))
+			inputValue := m.textarea.Value()
+
+			if strings.HasPrefix(inputValue, "/") {
+				if slices.Contains(slashCommands, strings.Split(inputValue, " ")[0]) {
+					// Valid command, add to history
+					m.commandsHistory = append(m.commandsHistory, inputValue)
+					m.historyIndex = len(m.commandsHistory)
+				}
+			}
+
+			_, err := m.conn.Write([]byte(inputValue + "\n"))
 			if err != nil {
 				// Error sending message to the serve
 				m.err = err
@@ -117,6 +142,44 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.viewport.SetContent(lipgloss.NewStyle().Width(m.viewport.Width).Render(strings.Join(m.messages, "\n")))
 			m.textarea.Reset()
 			m.viewport.GotoBottom()
+		case tea.KeyTab:
+			inputValue := m.textarea.Value()
+
+			if !strings.HasPrefix(inputValue, "/") {
+				return m, nil
+			}
+
+			for _, cmd := range slashCommands {
+				if strings.HasPrefix(cmd, inputValue) {
+					m.textarea.SetValue(cmd)
+					m.textarea.SetCursor(len(cmd))
+					break
+				}
+			}
+		case tea.KeyUp:
+			if len(m.commandsHistory) == 0 {
+				return m, nil
+			}
+
+			if m.historyIndex > 0 {
+				m.historyIndex--
+			}
+
+			command := m.commandsHistory[m.historyIndex]
+			m.textarea.SetValue(command)
+			m.textarea.SetCursor(len(command))
+		case tea.KeyDown:
+			if len(m.commandsHistory) == 0 || m.historyIndex >= len(m.commandsHistory)-1 {
+				return m, nil
+			}
+
+			m.historyIndex++
+			m.textarea.SetValue(m.commandsHistory[m.historyIndex])
+			m.textarea.SetCursor(len(m.commandsHistory[m.historyIndex]))
+		case tea.KeyBackspace:
+			if m.textarea.Value() == "" {
+				m.historyIndex = len(m.commandsHistory)
+			}
 		}
 	case Message:
 		if msg.SenderName == "Server" {
@@ -146,10 +209,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) View() string {
+	errMsg := ""
+	if m.err != nil {
+		errMsg = lipgloss.NewStyle().Foreground(lipgloss.Color("1")).Render(fmt.Sprintf("Error: %v", m.err)) + "\n"
+	}
+
 	return fmt.Sprintf(
-		"%s%s%s",
+		"%s%s%s%s",
 		m.viewport.View(),
 		gap,
+		errMsg,
 		m.textarea.View(),
 	)
 }
@@ -165,12 +234,22 @@ func connectToServer() (net.Conn, error) {
 }
 
 func listener(conn net.Conn, p *tea.Program) {
+	defer func() {
+		p.Quit()
+	}()
+
 	for {
 		header := make([]byte, 4)
 		_, err := conn.Read(header)
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return // Connection closed
+			}
+
+			if errors.Is(err, io.EOF) {
+				// User was idle for too long and server closed the connection
+				p.Send(errMsg(fmt.Errorf("disconnected from server due to inactivity")))
+				return
 			}
 
 			p.Send(errMsg(fmt.Errorf("error reading header from server: %w", err)))
