@@ -54,6 +54,13 @@ func (c *Client) Read() {
 			continue
 		}
 
+		// Check if the message contains a pipe character
+		// If it does, it's a malformed message
+		if strings.Contains(msg, "|") {
+			c.SendMessage(formatMessage("", "Server", "Malformed message. Please avoid using the '|' character."))
+			continue
+		}
+
 		msg = strings.TrimSpace(msg)
 		if after, ok := strings.CutPrefix(msg, "/"); ok {
 			args := strings.Fields(strings.ToLower(after))

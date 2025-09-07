@@ -83,8 +83,10 @@ func initialModel(c net.Conn) model {
 }
 
 func getForegroundColor() lipgloss.Color {
+	// Gets a color based on the number of connected clients
 	colorCode := 1 + len(clients)%255
 
+	// Skips colors that are used for server and sender styles
 	if colorCode == 5 || colorCode == 2 {
 		colorCode++
 	}
@@ -102,6 +104,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		vpCmd tea.Cmd
 	)
 
+	m.err = nil
 	m.textarea, tiCmd = m.textarea.Update(msg)
 	m.viewport, vpCmd = m.viewport.Update(msg)
 
@@ -111,6 +114,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.textarea.SetWidth(msg.Width)
 		m.viewport.Height = msg.Height - m.textarea.Height() - lipgloss.Height(gap)
 
+		// Rerender messages to fit new width
 		if len(m.messages) > 0 {
 			m.viewport.SetContent(lipgloss.NewStyle().Width(m.viewport.Width).Render(strings.Join(m.messages, "\n")))
 		}
@@ -123,6 +127,17 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyEnter:
 			inputValue := m.textarea.Value()
 
+			if strings.TrimSpace(inputValue) == "" {
+				m.textarea.Reset()
+				return m, nil
+			}
+
+			if strings.Contains(inputValue, "|") {
+				m.err = errors.New("the '|' character is not allowed")
+				return m, nil
+			}
+
+			// Check if it is a command
 			if strings.HasPrefix(inputValue, "/") {
 				if slices.Contains(slashCommands, strings.Split(inputValue, " ")[0]) {
 					// Valid command, add to history
@@ -145,10 +160,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		case tea.KeyTab:
 			inputValue := m.textarea.Value()
 
+			// Only autocomplete if it starts with a slash (for commands)
 			if !strings.HasPrefix(inputValue, "/") {
 				return m, nil
 			}
 
+			// Check if the input matches any of the commands and autocomplete
 			for _, cmd := range slashCommands {
 				if strings.HasPrefix(cmd, inputValue) {
 					m.textarea.SetValue(cmd)
@@ -161,6 +178,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
+			// Move up in history, but not out of bounds
 			if m.historyIndex > 0 {
 				m.historyIndex--
 			}
@@ -173,6 +191,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 
+			// Move down in history, but not out of bounds
 			m.historyIndex++
 			m.textarea.SetValue(m.commandsHistory[m.historyIndex])
 			m.textarea.SetCursor(len(m.commandsHistory[m.historyIndex]))
@@ -182,6 +201,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 	case Message:
+		// If the sender name is "Server", use the server style
+		// If the sender ID is "." or empty, it's a broadcast message from the server
+		// Otherwise, use or create a style for the client
 		if msg.SenderName == "Server" {
 			m.messages = append(m.messages, serverStyle.Render("[Server]: ")+msg.Content)
 		} else if msg.SenderID == "." || msg.SenderID == "" {
@@ -191,7 +213,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.SenderID != "." {
 			newStyle, ok := clients[msg.SenderID]
 			if !ok {
-				// Generate a random color for the new client
+				// If the sender ID is not in the clients map, create a new style for it
 				newStyle = lipgloss.NewStyle().Foreground(getForegroundColor())
 				clients[msg.SenderID] = newStyle
 			}
@@ -239,6 +261,7 @@ func listener(conn net.Conn, p *tea.Program) {
 	}()
 
 	for {
+		// Read the header first (4 bytes)
 		header := make([]byte, 4)
 		_, err := conn.Read(header)
 		if err != nil {
@@ -256,7 +279,7 @@ func listener(conn net.Conn, p *tea.Program) {
 			return
 		}
 
-		// Get the message size from the header
+		// Get the message size from the header, which lets us know how many bytes to read next
 		msgSize := binary.LittleEndian.Uint32(header)
 
 		// Create a buffer to hold the incoming message
