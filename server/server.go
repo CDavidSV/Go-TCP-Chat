@@ -53,6 +53,18 @@ func NewServer(address, port string) *Server {
 	return server
 }
 
+func formatMessage(senderID, senderName, content string) string {
+	if senderID == "" {
+		senderID = "."
+	}
+	if senderName == "" {
+		senderName = "."
+	}
+
+	message := fmt.Sprintf("%s|%s|%s", senderID, senderName, content)
+	return message
+}
+
 func (s *Server) run() {
 	defer s.wg.Done()
 
@@ -80,7 +92,7 @@ func (s *Server) run() {
 			clientChannel := client.GetChannel()
 			if clientChannel != nil {
 				clientChannel.RemoveMember(client)
-				s.broadcastMessage(client, clientChannel, fmt.Sprintf("[Server]: %s has left the channel.", client.Username))
+				s.broadcastMessage(client, clientChannel, fmt.Sprintf("%s has left the channel.", client.Username), true)
 				if len(clientChannel.members) == 0 {
 					delete(s.channels, clientChannel.Name)
 				}
@@ -94,23 +106,29 @@ func (s *Server) run() {
 			if cmdFunc, exists := s.commands[cmd.Name]; exists {
 				cmdFunc(cmd.Name, cmd.Args, cmd.Client, s) // Execute command if found
 			} else {
-				cmd.Client.SendMessage("[Server]: Unknown command. Type /help for a list of commands.")
+				cmd.Client.SendMessage(formatMessage("", "Server", "[Server]: Unknown command. Type /help for a list of commands."))
 			}
 		case msg := <-s.broadcast:
+			clientSender := msg.SenderID
+			if msg.IsServerMsg {
+				msg.SenderName = "Server"
+				clientSender = ""
+			}
+
 			// Handle broadcasting messages to clients
 			if msg.Channel == nil {
 				// Broadcast message to all clients if no channel is specified
 				for _, client := range s.clients {
-					if msg.Sender != client { // Avoid sending the message back to the sender if any is provided
-						client.SendMessage(msg.Content)
+					if msg.SenderID != client.ID { // Avoid sending the message back to the sender if any is provided
+						client.SendMessage(formatMessage(clientSender, msg.SenderName, msg.Content))
 					}
 				}
 				continue
 			}
 
 			for _, member := range msg.Channel.members {
-				if msg.Sender != member { // Avoid sending the message back to the sender if any is provided
-					member.SendMessage(msg.Content)
+				if msg.SenderID != member.ID { // Avoid sending the message back to the sender if any is provided
+					member.SendMessage(formatMessage(clientSender, msg.SenderName, msg.Content))
 				}
 			}
 		case <-s.shutdown:
@@ -172,17 +190,19 @@ func (s *Server) Start() {
 	s.logger.Info("Shutting down server...")
 	listener.Close()
 
-	s.broadcastMessage(nil, nil, "Server is shutting down. Disconnecting...")
+	s.broadcastMessage(nil, nil, "Server is shutting down. Disconnecting...", true)
 
 	close(s.shutdown) // Signal shutdown to all goroutines
 	s.wg.Wait()       // Wait for all goroutines to finish
 	s.logger.Info("Server has shut down.")
 }
 
-func (s *Server) broadcastMessage(client *Client, channel *Channel, msg string) {
+func (s *Server) broadcastMessage(client *Client, channel *Channel, msg string, isServerMsg bool) {
 	s.broadcast <- Message{
-		Sender:  client,
-		Channel: channel,
-		Content: msg,
+		SenderName:  client.Username,
+		SenderID:    client.ID,
+		Channel:     channel,
+		Content:     msg,
+		IsServerMsg: isServerMsg,
 	}
 }

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"encoding/binary"
 	"errors"
 	"net"
 	"strings"
@@ -53,11 +54,11 @@ func (c *Client) Read() {
 			continue
 		}
 
-		msg = strings.TrimSpace(strings.ToLower(msg))
+		msg = strings.TrimSpace(msg)
 		if after, ok := strings.CutPrefix(msg, "/"); ok {
-			args := strings.Fields(after)
+			args := strings.Fields(strings.ToLower(after))
 			if len(args) == 0 {
-				c.SendMessage("No command provided.")
+				c.SendMessage(formatMessage("", "Server", "No command provided."))
 				continue // Continue listening for messages
 			}
 
@@ -72,11 +73,11 @@ func (c *Client) Read() {
 		// Regular message
 		channel := c.GetChannel()
 		if channel == nil {
-			c.SendMessage("You are not in a channel. Use /join <channel> to join one.")
+			c.SendMessage(formatMessage("", "Server", "You are not in a channel. Use /join <channel> to join one."))
 			continue
 		}
 
-		c.server.broadcastMessage(c, channel, msg)
+		c.server.broadcastMessage(c, channel, msg, false)
 	}
 }
 
@@ -87,14 +88,27 @@ func (c *Client) Write() {
 
 	for msg := range c.send {
 		c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
-		_, err := c.conn.Write([]byte(msg + "\n"))
+		header := make([]byte, 4)
+		// msg += "\n"
+		binary.LittleEndian.PutUint32(header, uint32(len(msg)))
+		_, err := c.conn.Write(header)
+		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return // Connection closed
+			}
+
+			c.server.logger.Error("Error writing header to client", "client_id", c.ID, "error", err)
+			return
+		}
+
+		_, err = c.conn.Write([]byte(msg))
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return // Connection closed
 			}
 
 			c.server.logger.Error("Error writing to client", "client_id", c.ID, "error", err)
-			return // Error writing to connection
+			return
 		}
 	}
 }
