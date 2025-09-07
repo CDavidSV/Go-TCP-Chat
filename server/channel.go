@@ -6,11 +6,10 @@ type Channel struct {
 }
 
 type Message struct {
-	SenderID    string
-	Channel     *Channel
-	SenderName  string
-	Content     string
-	IsServerMsg bool
+	SenderID   string
+	Channel    *Channel
+	SenderName string
+	Content    string
 }
 
 func NewChannel(name string) *Channel {

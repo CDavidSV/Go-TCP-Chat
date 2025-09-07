@@ -109,9 +109,11 @@ func (s *Server) run() {
 				cmd.Client.SendMessage(formatMessage("", "Server", "[Server]: Unknown command. Type /help for a list of commands."))
 			}
 		case msg := <-s.broadcast:
+			// If the sender is the server then we don't include the sender ID in the message
+			// We still use the id to avoid sending the message back to the sender
+			// when broadcasting to a channel or to all clients
 			clientSender := msg.SenderID
-			if msg.IsServerMsg {
-				msg.SenderName = "Server"
+			if msg.SenderName == "Server" {
 				clientSender = ""
 			}
 
@@ -198,11 +200,21 @@ func (s *Server) Start() {
 }
 
 func (s *Server) broadcastMessage(client *Client, channel *Channel, msg string, isServerMsg bool) {
+	senderName := ""
+	senderID := ""
+	if client != nil {
+		senderName = client.Username
+		senderID = client.ID
+	}
+
+	if isServerMsg {
+		senderName = "Server"
+	}
+
 	s.broadcast <- Message{
-		SenderName:  client.Username,
-		SenderID:    client.ID,
-		Channel:     channel,
-		Content:     msg,
-		IsServerMsg: isServerMsg,
+		SenderName: senderName,
+		SenderID:   senderID,
+		Channel:    channel,
+		Content:    msg,
 	}
 }
