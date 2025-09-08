@@ -4,6 +4,9 @@ import (
 	"bufio"
 	"encoding/binary"
 	"errors"
+	"fmt"
+	"math"
+	"math/rand/v2"
 	"net"
 	"strings"
 	"sync"
@@ -12,23 +15,42 @@ import (
 	"github.com/google/uuid"
 )
 
-type Client struct {
-	ID       string
-	Username string
-	conn     net.Conn
-	channel  *Channel
-	server   *Server
-	send     chan string
-	mu       sync.RWMutex
+var rateLimitMessages []string = []string{
+	"Please slow down your messages.",
+	"You're sending messages too quickly.",
+	"Take a moment before sending another message.",
+	"Easy there! Let's keep the chat friendly.",
+	"Whoa! Let's give others a chance to speak.",
+	"Let's keep the conversation flowing smoothly.",
+	"Patience is a virtue, especially in chat.",
+	"Let's take a breather before the next message.",
+	"Remember, good things come to those who wait.",
+	"Let's keep the chat enjoyable for everyone.",
 }
 
-func NewClient(conn net.Conn, server *Server, name string) *Client {
+type Client struct {
+	ID            string
+	Username      string
+	conn          net.Conn
+	channel       *Channel
+	server        *Server
+	send          chan string
+	mu            sync.RWMutex
+	bucket        int
+	maxBucketSize int
+	bucketRate    float64 // tokens per second to refill
+	lastRequest   time.Time
+}
+
+func NewClient(conn net.Conn, server *Server, name string, maxBucketSize int, bucketRate float64) *Client {
 	return &Client{
-		ID:       uuid.NewString(),
-		Username: name,
-		conn:     conn,
-		server:   server,
-		send:     make(chan string, 512), // Buffered channel to prevent blocking
+		ID:            uuid.NewString(),
+		Username:      name,
+		conn:          conn,
+		server:        server,
+		maxBucketSize: maxBucketSize,
+		send:          make(chan string, 512), // Buffered channel to prevent blocking
+		bucketRate:    bucketRate,
 	}
 }
 
@@ -53,6 +75,24 @@ func (c *Client) Read() {
 			}
 			continue
 		}
+
+		// We get the elapsed time since the last request
+		now := time.Now()
+		elapsed := now.Sub(c.lastRequest).Seconds()
+
+		// We used this to determine how many tokens we should add to the bucket
+		tokens := elapsed * c.bucketRate
+		c.bucket = int(math.Min(float64(c.bucket)+tokens, float64(c.maxBucketSize)))
+		c.lastRequest = time.Now()
+
+		if c.bucket <= 0 {
+			randIndex := rand.IntN(len(rateLimitMessages))
+			c.SendMessage(formatMessage("", "Server", fmt.Sprintf("You are being rate limited. %s", rateLimitMessages[randIndex])))
+			continue
+		}
+
+		// Decrease the number of tokens in the bucket
+		c.bucket--
 
 		// Check if the message contains a pipe character
 		// If it does, it's a malformed message

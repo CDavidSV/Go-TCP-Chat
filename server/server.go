@@ -12,6 +12,11 @@ import (
 	"syscall"
 )
 
+var (
+	maxBucketSize = 10  // Maximum number of tokens in the bucket
+	bucketRate    = 0.5 // Tokens per second to refill the bucket
+)
+
 type Server struct {
 	clients    map[string]*Client
 	channels   map[string]*Channel
@@ -179,7 +184,7 @@ func (s *Server) Start() {
 				continue
 			}
 
-			s.register <- NewClient(conn, s, "Anonymous") // Queue new client for registration
+			s.register <- NewClient(conn, s, "Anonymous", maxBucketSize, bucketRate) // Queue new client for registration
 		}
 	}()
 
