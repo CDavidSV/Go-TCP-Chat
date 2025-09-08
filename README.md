@@ -7,6 +7,8 @@ Go-TCP-Chat is a TCP-based chat application implemented in Golang. It supports m
 - **Commands**: Includes commands like `/join`, `/leave`, `/clients`, `/members`, `/channels`, `/name`, and `/help`.
 - **User Management**: Users can change their usernames and view connected clients.
 
+![demo_gif](https://github.com/user-attachments/assets/2eb6e536-37cd-44fe-96da-9f60a420831e)
+
 ## Usage
 
 ### Running Locally
