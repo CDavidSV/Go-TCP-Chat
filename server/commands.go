@@ -75,7 +75,7 @@ func channelMembers(name string, args []string, client *Client, server *Server) 
 	for _, member := range joinedChannel.members {
 		members = append(members, member.Username)
 	}
-	client.SendMessage(formatMessage("", "", fmt.Sprintf("Members in channel '%s': \n%s", joinedChannel.Name, strings.Join(members, ","))))
+	client.SendMessage(formatMessage("", "", fmt.Sprintf("Members in channel '%s': \n%s", joinedChannel.Name, strings.Join(members, ", "))))
 }
 
 func listChannels(name string, args []string, client *Client, server *Server) {
