@@ -69,6 +69,12 @@ func initialModel(c net.Conn) model {
 	vp := viewport.New(30, 10)
 	vp.SetContent("Welcome back, type /help for commands")
 
+	// Disable default key bindings for scrolling
+	vp.KeyMap.Up.SetKeys(tea.KeyShiftUp.String())
+	vp.KeyMap.Down.SetKeys(tea.KeyShiftDown.String())
+	vp.KeyMap.PageUp.SetKeys(tea.KeyCtrlShiftUp.String())
+	vp.KeyMap.PageDown.SetKeys(tea.KeyCtrlShiftDown.String())
+
 	ta.KeyMap.InsertNewline.SetEnabled(false)
 
 	return model{
@@ -199,6 +205,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.textarea.Value() == "" {
 				m.historyIndex = len(m.commandsHistory)
 			}
+		default:
+			// Ignore all unhandled keys to prevent unintended behavior
+			return m, nil
 		}
 	case Message:
 		// If the sender name is "Server", use the server style
@@ -270,8 +279,8 @@ func listener(conn net.Conn, p *tea.Program) {
 			}
 
 			if errors.Is(err, io.EOF) {
-				// User was idle for too long and server closed the connection
-				p.Send(errMsg(fmt.Errorf("disconnected from server due to inactivity")))
+				// The server closed the connection
+				p.Send(errMsg(fmt.Errorf("disconnected from server")))
 				return
 			}
 

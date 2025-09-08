@@ -5,6 +5,7 @@ import (
 	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
 	"math"
 	"math/rand/v2"
 	"net"
@@ -69,11 +70,12 @@ func (c *Client) Read() {
 				return // Connection closed
 			}
 
-			if err.Error() != "EOF" {
-				c.server.logger.Error("Error reading from client", "client_id", c.ID, "error", err)
+			if errors.Is(err, io.EOF) {
+				// Client closed the connection
 				return
 			}
-			continue
+
+			c.server.logger.Error("Error reading from client", "client_id", c.ID, "error", err)
 		}
 
 		// We get the elapsed time since the last request
