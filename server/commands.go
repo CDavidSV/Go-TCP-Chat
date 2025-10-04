@@ -73,7 +73,7 @@ func channelMembers(name string, args []string, client *Client, server *Server) 
 
 	var members []string
 	for _, member := range joinedChannel.members {
-		members = append(members, member.Username)
+		members = append(members, member.GetUsername())
 	}
 	client.SendMessage(formatMessage("", "", fmt.Sprintf("Members in channel '%s': \n%s", joinedChannel.Name, strings.Join(members, ", "))))
 }
@@ -98,7 +98,7 @@ func changeName(name string, args []string, client *Client, server *Server) {
 	}
 
 	newName := args[0]
-	client.Username = newName
+	client.SetUsername(newName)
 	client.SendMessage(formatMessage("", "Server", fmt.Sprintf("Your username has been changed to '%s'", newName)))
 }
 

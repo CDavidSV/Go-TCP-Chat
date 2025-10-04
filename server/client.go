@@ -10,7 +10,7 @@ import (
 	"math/rand/v2"
 	"net"
 	"strings"
-	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,12 +31,11 @@ var rateLimitMessages []string = []string{
 
 type Client struct {
 	ID            string
-	Username      string
+	Username      atomic.Value
 	conn          net.Conn
-	channel       *Channel
+	channel       atomic.Value
 	server        *Server
 	send          chan string
-	mu            sync.RWMutex
 	bucket        int
 	maxBucketSize int
 	bucketRate    float64 // tokens per second to refill
@@ -44,15 +43,20 @@ type Client struct {
 }
 
 func NewClient(conn net.Conn, server *Server, name string, maxBucketSize int, bucketRate float64) *Client {
-	return &Client{
+	client := &Client{
 		ID:            uuid.NewString(),
-		Username:      name,
+		Username:      atomic.Value{},
+		channel:       atomic.Value{},
 		conn:          conn,
 		server:        server,
 		maxBucketSize: maxBucketSize,
-		send:          make(chan string, 512), // Buffered channel to prevent blocking
+		send:          make(chan string, 1024), // Buffered channel to prevent blocking
 		bucketRate:    bucketRate,
 	}
+
+	client.Username.Store(name)
+
+	return client
 }
 
 func (c *Client) Read() {
@@ -172,25 +176,21 @@ func (c *Client) SendMessage(msg string) {
 }
 
 func (c *Client) SetUsername(newName string) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.Username = newName
+	c.Username.Store(newName)
 }
 
 func (c *Client) GetUsername() string {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.Username
+	return c.Username.Load().(string)
 }
 
 func (c *Client) GetChannel() *Channel {
-	c.mu.RLock()
-	defer c.mu.RUnlock()
-	return c.channel
+	channel := c.channel.Load()
+	if channel == nil {
+		return nil
+	}
+	return channel.(*Channel)
 }
 
 func (c *Client) SetChannel(ch *Channel) {
-	c.mu.Lock()
-	defer c.mu.Unlock()
-	c.channel = ch
+	c.channel.Store(ch)
 }

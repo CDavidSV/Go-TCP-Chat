@@ -14,7 +14,7 @@ import (
 
 var (
 	maxBucketSize = 10  // Maximum number of tokens in the bucket
-	bucketRate    = 0.5 // Tokens per second to refill the bucket
+	bucketRate    = 1.5 // Tokens per second to refill the bucket
 )
 
 type Server struct {
@@ -208,7 +208,7 @@ func (s *Server) broadcastMessage(client *Client, channel *Channel, msg string, 
 	senderName := ""
 	senderID := ""
 	if client != nil {
-		senderName = client.Username
+		senderName = client.GetUsername()
 		senderID = client.ID
 	}
 
