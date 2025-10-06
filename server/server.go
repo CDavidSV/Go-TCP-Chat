@@ -73,7 +73,6 @@ func formatMessage(senderID, senderName, content string) string {
 func (s *Server) run() {
 	defer s.wg.Done()
 
-	// TODO: Implement main event loop
 	for {
 		select {
 		case client := <-s.register:
@@ -97,7 +96,7 @@ func (s *Server) run() {
 			clientChannel := client.GetChannel()
 			if clientChannel != nil {
 				clientChannel.RemoveMember(client)
-				s.broadcastMessage(client, clientChannel, fmt.Sprintf("%s has left the channel.", client.Username), true)
+				s.broadcastMessage(client, clientChannel, fmt.Sprintf("%s has left the channel.", client.GetUsername()), true)
 				if len(clientChannel.members) == 0 {
 					delete(s.channels, clientChannel.Name)
 				}

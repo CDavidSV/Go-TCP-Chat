@@ -30,14 +30,14 @@ func joinChannel(name string, args []string, client *Client, server *Server) {
 	if joinedChannel != nil {
 		joinedChannel.RemoveMember(client)
 
-		server.broadcastMessage(client, joinedChannel, fmt.Sprintf("%s has left the channel.", client.Username), true)
+		server.broadcastMessage(client, joinedChannel, fmt.Sprintf("%s has left the channel.", client.GetUsername()), true)
 		if len(joinedChannel.members) == 0 {
 			delete(server.channels, joinedChannel.Name)
 		}
 	}
 	channel.AddMember(client)
 	client.SetChannel(channel)
-	server.broadcastMessage(client, channel, fmt.Sprintf("%s has joined the channel.", client.Username), true)
+	server.broadcastMessage(client, channel, fmt.Sprintf("%s has joined the channel.", client.GetUsername()), true)
 	client.SendMessage(formatMessage("", "Server", fmt.Sprintf("You have joined channel '%s'", channel.Name)))
 }
 
