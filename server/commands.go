@@ -15,13 +15,26 @@ type Command struct {
 
 func joinChannel(name string, args []string, client *Client, server *Server) {
 	if len(args) < 1 {
-		client.SendMessage(formatMessage("", "Server", "Usage: /join <channel_name>"))
+		client.SendMessage(formatMessage("", "Server", "Usage: /join <channel_name> [password]"))
 		return
 	}
+
+	maxPasswordLength := 32
+	password := ""
+	if len(args) > 1 {
+		password = args[1]
+	}
+
+	if len(password) > maxPasswordLength {
+		client.SendMessage(formatMessage("", "Server", fmt.Sprintf("Password is too long. Maximum length is %d characters.", maxPasswordLength)))
+		return
+	}
+
 	channelName := args[0]
 	channel, exists := server.channels[channelName]
 	if !exists {
-		channel = NewChannel(channelName)
+		channel := NewChannel(channelName, password)
+
 		server.channels[channelName] = channel
 	}
 
@@ -35,7 +48,17 @@ func joinChannel(name string, args []string, client *Client, server *Server) {
 			delete(server.channels, joinedChannel.Name)
 		}
 	}
-	channel.AddMember(client)
+
+	if channel.RequiresPassword() && password == "" {
+		client.SendMessage(formatMessage("", "Server", fmt.Sprintf("Channel '%s' requires a password.", channelName)))
+		return
+	}
+
+	if err := channel.AddMember(client, password); err != nil {
+		client.SendMessage(formatMessage("", "Server", fmt.Sprintf("Incorrect password for channel '%s'", channelName)))
+		return
+	}
+
 	client.SetChannel(channel)
 	server.broadcastMessage(client, channel, fmt.Sprintf("%s has joined the channel.", client.GetUsername()), true)
 	client.SendMessage(formatMessage("", "Server", fmt.Sprintf("You have joined channel '%s'", channel.Name)))
@@ -104,12 +127,16 @@ func changeName(name string, args []string, client *Client, server *Server) {
 
 func help(name string, args []string, client *Client, server *Server) {
 	helpText := `Available commands:
-/join <channel_name> - Join or create a channel
+/join <channel_name> [password] - Join or create a channel
 /leave - Leave the current channel
-/clients - List all connected clients
-/members - List members in the current channel
+/clients - Get the number of connected clients
+/members - List members in your current channel
 /channels - List all available channels
-/name <new_username> - Change your username`
+/name <new_username> - Change your username
+/help - Show this help message
+
+Note: Arguments in <> are required, arguments in [] are optional.
+`
 
 	client.SendMessage(formatMessage("", "", helpText))
 }
