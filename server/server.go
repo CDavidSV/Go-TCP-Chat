@@ -8,6 +8,7 @@ import (
 	"net/url"
 	"os"
 	"os/signal"
+	"strings"
 	"sync"
 	"syscall"
 )
@@ -66,8 +67,14 @@ func formatMessage(senderID, senderName, content string) string {
 		senderName = "."
 	}
 
-	message := fmt.Sprintf("%s|%s|%s", senderID, senderName, content)
-	return message
+	var builder strings.Builder
+	builder.Grow(len(senderID) + len(senderName) + len(content) + 2)
+	builder.WriteString(senderID)
+	builder.WriteByte('|')
+	builder.WriteString(senderName)
+	builder.WriteByte('|')
+	builder.WriteString(content)
+	return builder.String()
 }
 
 func (s *Server) run() {
@@ -121,12 +128,14 @@ func (s *Server) run() {
 				clientSender = ""
 			}
 
+			formattedMsg := formatMessage(clientSender, msg.SenderName, msg.Content)
+
 			// Handle broadcasting messages to clients
 			if msg.Channel == nil {
 				// Broadcast message to all clients if no channel is specified
 				for _, client := range s.clients {
 					if msg.SenderID != client.ID { // Avoid sending the message back to the sender if any is provided
-						client.SendMessage(formatMessage(clientSender, msg.SenderName, msg.Content))
+						client.SendMessage(formattedMsg)
 					}
 				}
 				continue
@@ -134,7 +143,7 @@ func (s *Server) run() {
 
 			for _, member := range msg.Channel.members {
 				if msg.SenderID != member.ID { // Avoid sending the message back to the sender if any is provided
-					member.SendMessage(formatMessage(clientSender, msg.SenderName, msg.Content))
+					member.SendMessage(formattedMsg)
 				}
 			}
 		case <-s.shutdown:

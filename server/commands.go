@@ -33,7 +33,7 @@ func joinChannel(name string, args []string, client *Client, server *Server) {
 	channelName := args[0]
 	channel, exists := server.channels[channelName]
 	if !exists {
-		channel := NewChannel(channelName, password)
+		channel = NewChannel(channelName, password)
 
 		server.channels[channelName] = channel
 	}
@@ -72,7 +72,7 @@ func leaveChannel(name string, args []string, client *Client, server *Server) {
 		return
 	}
 	joinedChannel.RemoveMember(client)
-	server.broadcastMessage(client, joinedChannel, fmt.Sprintf("%s has left the channel.", client.Username), true)
+	server.broadcastMessage(client, joinedChannel, fmt.Sprintf("%s has left the channel.", client.GetUsername()), true)
 
 	if len(joinedChannel.members) == 0 {
 		delete(server.channels, joinedChannel.Name)

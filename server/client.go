@@ -80,6 +80,7 @@ func (c *Client) Read() {
 			}
 
 			c.server.logger.Error("Error reading from client", "client_id", c.ID, "error", err)
+			return
 		}
 
 		// We get the elapsed time since the last request
@@ -141,21 +142,12 @@ func (c *Client) Write() {
 
 	for msg := range c.send {
 		c.conn.SetWriteDeadline(time.Now().Add(5 * time.Second))
+
 		header := make([]byte, 4)
-		// msg += "\n"
 		binary.LittleEndian.PutUint32(header, uint32(len(msg)))
-		_, err := c.conn.Write(header)
-		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return // Connection closed
-			}
 
-			c.server.logger.Error("Error writing header to client", "client_id", c.ID, "error", err)
-			return
-		}
-
-		_, err = c.conn.Write([]byte(msg))
-		if err != nil {
+		finalMessage := append(header, []byte(msg)...)
+		if _, err := c.conn.Write(finalMessage); err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return // Connection closed
 			}
