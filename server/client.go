@@ -31,7 +31,9 @@ var rateLimitMessages []string = []string{
 
 type Client struct {
 	ID            string
+	IP            string // Client's IP address (used as initial key)
 	Username      atomic.Value
+	registered    atomic.Bool
 	conn          net.Conn
 	channel       atomic.Value
 	server        *Server
@@ -43,9 +45,15 @@ type Client struct {
 }
 
 func NewClient(conn net.Conn, server *Server, name string, maxBucketSize int, bucketRate float64) *Client {
+	id := uuid.NewString()
+	// Extract IP address from connection
+	ip := conn.RemoteAddr().String()
+
 	client := &Client{
-		ID:            uuid.NewString(),
+		ID:            id,
+		IP:            ip,
 		Username:      atomic.Value{},
+		registered:    atomic.Bool{},
 		channel:       atomic.Value{},
 		conn:          conn,
 		server:        server,
@@ -55,6 +63,7 @@ func NewClient(conn net.Conn, server *Server, name string, maxBucketSize int, bu
 	}
 
 	client.Username.Store(name)
+	client.registered.Store(false) // Not registered until username is set
 
 	return client
 }
@@ -108,9 +117,39 @@ func (c *Client) Read() {
 			continue
 		}
 
+		// This is always done after the user connects to the server
+		// If the message contains spaces, only the first part is used as the username
+		if !c.IsRegistered() {
+			username := strings.TrimSpace(msg)
+			if strings.Contains(username, " ") {
+				username = strings.SplitN(username, " ", 2)[0]
+			}
+
+			// Request username change through server channel
+			// Use IP as old key for first-time registration
+			response := make(chan error, 1)
+			c.server.setUsername <- UsernameChange{
+				Client:      c,
+				OldKey:      c.IP, // Use IP address as old key
+				NewUsername: username,
+				Response:    response,
+			}
+
+			// Wait for response
+			if err := <-response; err != nil {
+				c.SendMessage(formatMessage("", "Server", fmt.Sprintf("Failed to set username: %s", err.Error())))
+				continue
+			}
+
+			c.SetRegistered(true)
+			c.SendMessage(formatMessage("", "Server", fmt.Sprintf("Your username has been set to '%s'. Use /join <channel_name> to join a channel.", username)))
+			continue
+		}
+
+		// Check if the message is a command (starts with '/')
 		msg = strings.TrimSpace(msg)
 		if after, ok := strings.CutPrefix(msg, "/"); ok {
-			args := strings.Fields(strings.ToLower(after))
+			args := strings.Fields(after)
 			if len(args) == 0 {
 				c.SendMessage(formatMessage("", "Server", "No command provided."))
 				continue // Continue listening for messages
@@ -185,4 +224,12 @@ func (c *Client) GetChannel() *Channel {
 
 func (c *Client) SetChannel(ch *Channel) {
 	c.channel.Store(ch)
+}
+
+func (c *Client) IsRegistered() bool {
+	return c.registered.Load()
+}
+
+func (c *Client) SetRegistered(registered bool) {
+	c.registered.Store(registered)
 }

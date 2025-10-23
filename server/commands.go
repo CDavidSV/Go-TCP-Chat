@@ -121,8 +121,45 @@ func changeName(name string, args []string, client *Client, server *Server) {
 	}
 
 	newName := args[0]
-	client.SetUsername(newName)
+	oldUsername := client.GetUsername()
+
+	// Use the shared changeUsername function
+	if err := server.changeUsername(client, oldUsername, newName); err != nil {
+		client.SendMessage(formatMessage("", "Server", fmt.Sprintf("Failed to change username: %s", err.Error())))
+		return
+	}
+
 	client.SendMessage(formatMessage("", "Server", fmt.Sprintf("Your username has been changed to '%s'", newName)))
+}
+
+func whisper(name string, args []string, client *Client, server *Server) {
+	if len(args) < 2 {
+		client.SendMessage(formatMessage("", "Server", "Usage: /whisper <username> <message>"))
+		return
+	}
+
+	targetUsername := args[0]
+	message := strings.Join(args[1:], " ")
+
+	targetClient, exists := server.clients[targetUsername]
+	if !exists {
+		client.SendMessage(formatMessage("", "Server", fmt.Sprintf("User '%s' not found or not registered.", targetUsername)))
+		return
+	}
+
+	if client.GetUsername() == targetUsername {
+		client.SendMessage(formatMessage("", "Server", "You cannot whisper to yourself."))
+		return
+	}
+
+	if !targetClient.IsRegistered() {
+		client.SendMessage(formatMessage("", "Server", fmt.Sprintf("User '%s' is not available.", targetUsername)))
+		return
+	}
+
+	// Send the whisper message
+	targetClient.SendMessage(formatMessage(client.ID, fmt.Sprintf("DM from %s", client.GetUsername()), message))
+	client.SendMessage(formatMessage("", "Server", fmt.Sprintf("Whisper sent to '%s'", targetUsername)))
 }
 
 func help(name string, args []string, client *Client, server *Server) {
@@ -133,6 +170,7 @@ func help(name string, args []string, client *Client, server *Server) {
 /members - List members in your current channel
 /channels - List all available channels
 /name <new_username> - Change your username
+/whisper <username> <message> - Send a private message to a user
 /help - Show this help message
 
 Note: Arguments in <> are required, arguments in [] are optional.
@@ -148,5 +186,6 @@ func (s *Server) loadCommands() {
 	s.commands["members"] = channelMembers
 	s.commands["channels"] = listChannels
 	s.commands["name"] = changeName
+	s.commands["whisper"] = whisper
 	s.commands["help"] = help
 }

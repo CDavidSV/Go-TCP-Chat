@@ -31,6 +31,7 @@ var (
 		"/leave",
 		"/members",
 		"/clients",
+		"/whisper",
 	}
 )
 
@@ -67,7 +68,7 @@ func initialModel(c net.Conn) model {
 	ta.ShowLineNumbers = false
 
 	vp := viewport.New(30, 10)
-	vp.SetContent("Welcome back, type /help for commands")
+	// vp.SetContent("Welcome back, type /help for commands")
 
 	// Disable default key bindings for scrolling
 	vp.KeyMap.Up.SetKeys(tea.KeyShiftUp.String())

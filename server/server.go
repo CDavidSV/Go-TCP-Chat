@@ -19,18 +19,26 @@ var (
 )
 
 type Server struct {
-	clients    map[string]*Client
-	channels   map[string]*Channel
-	commands   map[string]CommandFunc
-	command    chan Command
-	register   chan *Client
-	unregister chan *Client
-	broadcast  chan Message
-	shutdown   chan struct{}
-	url        *url.URL
-	logger     *slog.Logger
-	wg         sync.WaitGroup
-	stopped    bool
+	clients     map[string]*Client // IP address (unregistered) or Username (registered)
+	channels    map[string]*Channel
+	commands    map[string]CommandFunc
+	command     chan Command
+	register    chan *Client
+	unregister  chan *Client
+	setUsername chan UsernameChange
+	broadcast   chan Message
+	shutdown    chan struct{}
+	url         *url.URL
+	logger      *slog.Logger
+	wg          sync.WaitGroup
+	stopped     bool
+}
+
+type UsernameChange struct {
+	Client      *Client
+	OldKey      string
+	NewUsername string
+	Response    chan error
 }
 
 func NewServer(address, port string) *Server {
@@ -42,17 +50,18 @@ func NewServer(address, port string) *Server {
 	logger := slog.New(slog.NewTextHandler(os.Stdout, nil))
 
 	server := &Server{
-		clients:    make(map[string]*Client),
-		channels:   make(map[string]*Channel),
-		commands:   make(map[string]CommandFunc),
-		command:    make(chan Command),
-		register:   make(chan *Client),
-		unregister: make(chan *Client),
-		broadcast:  make(chan Message, 1024), // Buffered channel to prevent blocking
-		shutdown:   make(chan struct{}),
-		url:        url,
-		logger:     logger,
-		stopped:    false,
+		clients:     make(map[string]*Client),
+		channels:    make(map[string]*Channel),
+		commands:    make(map[string]CommandFunc),
+		command:     make(chan Command),
+		register:    make(chan *Client),
+		unregister:  make(chan *Client),
+		setUsername: make(chan UsernameChange),
+		broadcast:   make(chan Message, 1024), // Buffered channel to prevent blocking
+		shutdown:    make(chan struct{}),
+		url:         url,
+		logger:      logger,
+		stopped:     false,
 	}
 
 	server.loadCommands()
@@ -77,15 +86,47 @@ func formatMessage(senderID, senderName, content string) string {
 	return builder.String()
 }
 
+// changeUsername validates and updates a client's username
+func (s *Server) changeUsername(client *Client, oldKey, newUsername string) error {
+	// Validate username
+	newUsername = strings.TrimSpace(newUsername)
+	if newUsername == "" {
+		return fmt.Errorf("username cannot be empty")
+	}
+
+	if len(newUsername) > 32 {
+		return fmt.Errorf("username cannot exceed 32 characters")
+	}
+
+	if strings.HasPrefix(newUsername, "temp_") {
+		return fmt.Errorf("username cannot start with 'temp_'")
+	}
+
+	// Check for duplicate usernames
+	if existingClient, exists := s.clients[newUsername]; exists && existingClient != client {
+		return fmt.Errorf("'%s' is already taken", newUsername)
+	}
+
+	// Delete old key from map
+	delete(s.clients, oldKey)
+
+	// Add client with new username as key
+	s.clients[newUsername] = client
+	client.SetUsername(newUsername)
+
+	return nil
+}
+
 func (s *Server) run() {
 	defer s.wg.Done()
 
 	for {
 		select {
 		case client := <-s.register:
-			// Handle new client registration
-			s.clients[client.ID] = client
-			s.logger.Info("Client connected", "client_id", client.ID, "ip", client.conn.RemoteAddr().String(), "total_clients", len(s.clients))
+			// Handle new client registration - use IP address as initial key
+			s.clients[client.IP] = client
+			s.logger.Info("Client connected", "client_id", client.ID, "ip", client.IP, "total_clients", len(s.clients))
+			client.SendMessage(formatMessage("", "Server", "Welcome! Please set your username by typing it in."))
 
 			// Start reader and writer goroutines for the client
 			s.wg.Add(1)
@@ -109,9 +150,19 @@ func (s *Server) run() {
 				}
 			}
 
-			delete(s.clients, client.ID)
+			// Delete from clients map using username (if registered) or IP (if not)
+			if client.IsRegistered() {
+				delete(s.clients, client.GetUsername())
+			} else {
+				delete(s.clients, client.IP)
+			}
+
 			close(client.send)
-			s.logger.Info("Client disconnected", "client_id", client.ID, "ip", client.conn.RemoteAddr().String(), "total_clients", len(s.clients))
+			s.logger.Info("Client disconnected", "client_id", client.ID, "username", client.GetUsername(), "registered", client.IsRegistered(), "ip", client.IP, "total_clients", len(s.clients))
+		case usernameChange := <-s.setUsername:
+			// Handle username changes from client Read() goroutine
+			err := s.changeUsername(usernameChange.Client, usernameChange.OldKey, usernameChange.NewUsername)
+			usernameChange.Response <- err
 		case cmd := <-s.command:
 			// Handle commands from clients
 			if cmdFunc, exists := s.commands[cmd.Name]; exists {
@@ -192,7 +243,7 @@ func (s *Server) Start() {
 				continue
 			}
 
-			s.register <- NewClient(conn, s, "Anonymous", maxBucketSize, bucketRate) // Queue new client for registration
+			s.register <- NewClient(conn, s, "", maxBucketSize, bucketRate) // Queue new client for registration
 		}
 	}()
 
