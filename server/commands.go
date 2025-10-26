@@ -15,7 +15,7 @@ type Command struct {
 
 func joinChannel(name string, args []string, client *Client, server *Server) {
 	if len(args) < 1 {
-		client.SendMessage(formatMessage("", "Server", "Usage: /join <channel_name> [password]"))
+		client.SendMessage(formatMessage("Server", "Usage: /join <channel_name> [password]"))
 		return
 	}
 
@@ -26,7 +26,7 @@ func joinChannel(name string, args []string, client *Client, server *Server) {
 	}
 
 	if len(password) > maxPasswordLength {
-		client.SendMessage(formatMessage("", "Server", fmt.Sprintf("Password is too long. Maximum length is %d characters.", maxPasswordLength)))
+		client.SendMessage(formatMessage("Server", fmt.Sprintf("Password is too long. Maximum length is %d characters.", maxPasswordLength)))
 		return
 	}
 
@@ -43,54 +43,54 @@ func joinChannel(name string, args []string, client *Client, server *Server) {
 	if joinedChannel != nil {
 		joinedChannel.RemoveMember(client)
 
-		server.broadcastMessage(client, joinedChannel, fmt.Sprintf("%s has left the channel.", client.GetUsername()), true)
+		server.broadcastMessage(client, joinedChannel, fmt.Sprintf("%s has left the channel.", client.GetUsername()))
 		if len(joinedChannel.members) == 0 {
 			delete(server.channels, joinedChannel.Name)
 		}
 	}
 
 	if channel.RequiresPassword() && password == "" {
-		client.SendMessage(formatMessage("", "Server", fmt.Sprintf("Channel '%s' requires a password.", channelName)))
+		client.SendMessage(formatMessage("Server", fmt.Sprintf("Channel '%s' requires a password.", channelName)))
 		return
 	}
 
 	if err := channel.AddMember(client, password); err != nil {
-		client.SendMessage(formatMessage("", "Server", fmt.Sprintf("Incorrect password for channel '%s'", channelName)))
+		client.SendMessage(formatMessage("Server", fmt.Sprintf("Incorrect password for channel '%s'", channelName)))
 		return
 	}
 
 	client.SetChannel(channel)
-	server.broadcastMessage(client, channel, fmt.Sprintf("%s has joined the channel.", client.GetUsername()), true)
-	client.SendMessage(formatMessage("", "Server", fmt.Sprintf("You have joined channel '%s'", channel.Name)))
+	client.SendMessage(formatMessage("Server", fmt.Sprintf("You have joined channel '%s'", channel.Name)))
+	server.broadcastMessage(client, channel, fmt.Sprintf("%s has joined the channel.", client.GetUsername()))
 }
 
 func leaveChannel(name string, args []string, client *Client, server *Server) {
 	joinedChannel := client.GetChannel()
 
 	if joinedChannel == nil {
-		client.SendMessage(formatMessage("", "Server", "You are not in any channel."))
+		client.SendMessage(formatMessage("Server", "You are not in any channel."))
 		return
 	}
 	joinedChannel.RemoveMember(client)
-	server.broadcastMessage(client, joinedChannel, fmt.Sprintf("%s has left the channel.", client.GetUsername()), true)
+	server.broadcastMessage(client, joinedChannel, fmt.Sprintf("%s has left the channel.", client.GetUsername()))
 
 	if len(joinedChannel.members) == 0 {
 		delete(server.channels, joinedChannel.Name)
 	}
 
 	client.SetChannel(nil)
-	client.SendMessage(formatMessage("", "Server", fmt.Sprintf("You have left channel '%s'", joinedChannel.Name)))
+	client.SendMessage(formatMessage("Server", fmt.Sprintf("You have left channel '%s'", joinedChannel.Name)))
 }
 
 func connectedClients(name string, args []string, client *Client, server *Server) {
-	client.SendMessage(formatMessage("", "Server", fmt.Sprintf("Connected clients (%d)", len(server.clients))))
+	client.SendMessage(formatMessage("Server", fmt.Sprintf("Connected clients (%d)", len(server.clients))))
 }
 
 func channelMembers(name string, args []string, client *Client, server *Server) {
 	joinedChannel := client.GetChannel()
 
 	if joinedChannel == nil {
-		client.SendMessage(formatMessage("", "", "You are not in any channel."))
+		client.SendMessage(formatMessage("", "You are not in any channel."))
 		return
 	}
 
@@ -98,12 +98,12 @@ func channelMembers(name string, args []string, client *Client, server *Server) 
 	for _, member := range joinedChannel.members {
 		members = append(members, member.GetUsername())
 	}
-	client.SendMessage(formatMessage("", "", fmt.Sprintf("Members in channel '%s': \n%s", joinedChannel.Name, strings.Join(members, ", "))))
+	client.SendMessage(formatMessage("", fmt.Sprintf("Members in channel '%s': \n%s", joinedChannel.Name, strings.Join(members, ", "))))
 }
 
 func listChannels(name string, args []string, client *Client, server *Server) {
 	if len(server.channels) == 0 {
-		client.SendMessage(formatMessage("", "", "No channels available."))
+		client.SendMessage(formatMessage("", "No channels available."))
 		return
 	}
 
@@ -111,12 +111,12 @@ func listChannels(name string, args []string, client *Client, server *Server) {
 	for channelName, channel := range server.channels {
 		channelNames = append(channelNames, channelName+fmt.Sprintf(" (%d)", len(channel.members)))
 	}
-	client.SendMessage(formatMessage("", "", fmt.Sprintf("Available channels: \n%s", strings.Join(channelNames, ","))))
+	client.SendMessage(formatMessage("", fmt.Sprintf("Available channels: \n%s", strings.Join(channelNames, ","))))
 }
 
 func changeName(name string, args []string, client *Client, server *Server) {
 	if len(args) < 1 {
-		client.SendMessage(formatMessage("", "Server", "Usage: /name <new_username>"))
+		client.SendMessage(formatMessage("Server", "Usage: /name <new_username>"))
 		return
 	}
 
@@ -125,16 +125,16 @@ func changeName(name string, args []string, client *Client, server *Server) {
 
 	// Use the shared changeUsername function
 	if err := server.changeUsername(client, oldUsername, newName); err != nil {
-		client.SendMessage(formatMessage("", "Server", fmt.Sprintf("Failed to change username: %s", err.Error())))
+		client.SendMessage(formatMessage("Server", fmt.Sprintf("Failed to change username: %s", err.Error())))
 		return
 	}
 
-	client.SendMessage(formatMessage("", "Server", fmt.Sprintf("Your username has been changed to '%s'", newName)))
+	client.SendMessage(formatMessage("Server", fmt.Sprintf("Your username has been changed to '%s'", newName)))
 }
 
 func whisper(name string, args []string, client *Client, server *Server) {
 	if len(args) < 2 {
-		client.SendMessage(formatMessage("", "Server", "Usage: /whisper <username> <message>"))
+		client.SendMessage(formatMessage("Server", "Usage: /whisper <username> <message>"))
 		return
 	}
 
@@ -143,23 +143,23 @@ func whisper(name string, args []string, client *Client, server *Server) {
 
 	targetClient, exists := server.clients[targetUsername]
 	if !exists {
-		client.SendMessage(formatMessage("", "Server", fmt.Sprintf("User '%s' not found or not registered.", targetUsername)))
+		client.SendMessage(formatMessage("Server", fmt.Sprintf("User '%s' not found or not registered.", targetUsername)))
 		return
 	}
 
 	if client.GetUsername() == targetUsername {
-		client.SendMessage(formatMessage("", "Server", "You cannot whisper to yourself."))
+		client.SendMessage(formatMessage("Server", "You cannot whisper to yourself."))
 		return
 	}
 
 	if !targetClient.IsRegistered() {
-		client.SendMessage(formatMessage("", "Server", fmt.Sprintf("User '%s' is not available.", targetUsername)))
+		client.SendMessage(formatMessage("Server", fmt.Sprintf("User '%s' is not available.", targetUsername)))
 		return
 	}
 
 	// Send the whisper message
-	targetClient.SendMessage(formatMessage(client.ID, fmt.Sprintf("DM from %s", client.GetUsername()), message))
-	client.SendMessage(formatMessage("", "Server", fmt.Sprintf("Whisper sent to '%s'", targetUsername)))
+	targetClient.SendMessage(formatMessage(fmt.Sprintf("DM from %s", client.GetUsername()), message))
+	client.SendMessage(formatMessage("Server", fmt.Sprintf("Whisper sent to '%s'", targetUsername)))
 }
 
 func help(name string, args []string, client *Client, server *Server) {
@@ -176,7 +176,7 @@ func help(name string, args []string, client *Client, server *Server) {
 Note: Arguments in <> are required, arguments in [] are optional.
 `
 
-	client.SendMessage(formatMessage("", "", helpText))
+	client.SendMessage(formatMessage("", helpText))
 }
 
 func (s *Server) loadCommands() {

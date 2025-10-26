@@ -16,6 +16,8 @@ import (
 var (
 	maxBucketSize = 10  // Maximum number of tokens in the bucket
 	bucketRate    = 1.5 // Tokens per second to refill the bucket
+
+	ErrBroadcastChannelFull = errors.New("broadcast channel is full")
 )
 
 type Server struct {
@@ -57,7 +59,7 @@ func NewServer(address, port string) *Server {
 		register:    make(chan *Client),
 		unregister:  make(chan *Client),
 		setUsername: make(chan UsernameChange),
-		broadcast:   make(chan Message, 1024), // Buffered channel to prevent blocking
+		broadcast:   make(chan Message, 10000),
 		shutdown:    make(chan struct{}),
 		url:         url,
 		logger:      logger,
@@ -68,18 +70,13 @@ func NewServer(address, port string) *Server {
 	return server
 }
 
-func formatMessage(senderID, senderName, content string) string {
-	if senderID == "" {
-		senderID = "."
-	}
+func formatMessage(senderName, content string) string {
 	if senderName == "" {
 		senderName = "."
 	}
 
 	var builder strings.Builder
-	builder.Grow(len(senderID) + len(senderName) + len(content) + 2)
-	builder.WriteString(senderID)
-	builder.WriteByte('|')
+	builder.Grow(len(senderName) + len(content) + 2)
 	builder.WriteString(senderName)
 	builder.WriteByte('|')
 	builder.WriteString(content)
@@ -96,10 +93,6 @@ func (s *Server) changeUsername(client *Client, oldKey, newUsername string) erro
 
 	if len(newUsername) > 32 {
 		return fmt.Errorf("username cannot exceed 32 characters")
-	}
-
-	if strings.HasPrefix(newUsername, "temp_") {
-		return fmt.Errorf("username cannot start with 'temp_'")
 	}
 
 	// Check for duplicate usernames
@@ -125,8 +118,8 @@ func (s *Server) run() {
 		case client := <-s.register:
 			// Handle new client registration - use IP address as initial key
 			s.clients[client.IP] = client
-			s.logger.Info("Client connected", "client_id", client.ID, "ip", client.IP, "total_clients", len(s.clients))
-			client.SendMessage(formatMessage("", "Server", "Welcome! Please set your username by typing it in."))
+			s.logger.Info("Client connected", "ip", client.IP, "total_clients", len(s.clients))
+			client.SendMessage(formatMessage("Server", "Welcome! Please set your username by typing it in."))
 
 			// Start reader and writer goroutines for the client
 			s.wg.Add(1)
@@ -144,7 +137,7 @@ func (s *Server) run() {
 			clientChannel := client.GetChannel()
 			if clientChannel != nil {
 				clientChannel.RemoveMember(client)
-				s.broadcastMessage(client, clientChannel, fmt.Sprintf("%s has left the channel.", client.GetUsername()), true)
+				s.broadcastMessage(client, clientChannel, fmt.Sprintf("%s has left the channel.", client.GetUsername()))
 				if len(clientChannel.members) == 0 {
 					delete(s.channels, clientChannel.Name)
 				}
@@ -158,7 +151,7 @@ func (s *Server) run() {
 			}
 
 			close(client.send)
-			s.logger.Info("Client disconnected", "client_id", client.ID, "username", client.GetUsername(), "registered", client.IsRegistered(), "ip", client.IP, "total_clients", len(s.clients))
+			s.logger.Info("Client disconnected", "username", client.GetUsername(), "registered", client.IsRegistered(), "ip", client.IP, "total_clients", len(s.clients))
 		case usernameChange := <-s.setUsername:
 			// Handle username changes from client Read() goroutine
 			err := s.changeUsername(usernameChange.Client, usernameChange.OldKey, usernameChange.NewUsername)
@@ -168,32 +161,25 @@ func (s *Server) run() {
 			if cmdFunc, exists := s.commands[cmd.Name]; exists {
 				cmdFunc(cmd.Name, cmd.Args, cmd.Client, s) // Execute command if found
 			} else {
-				cmd.Client.SendMessage(formatMessage("", "Server", "[Server]: Unknown command. Type /help for a list of commands."))
+				cmd.Client.SendMessage(formatMessage("Server", "[Server]: Unknown command. Type /help for a list of commands."))
 			}
 		case msg := <-s.broadcast:
-			// If the sender is the server then we don't include the sender ID in the message
-			// We still use the id to avoid sending the message back to the sender
-			// when broadcasting to a channel or to all clients
-			clientSender := msg.SenderID
-			if msg.SenderName == "Server" {
-				clientSender = ""
-			}
-
-			formattedMsg := formatMessage(clientSender, msg.SenderName, msg.Content)
+			formattedMsg := formatMessage(msg.SenderName, msg.Content)
 
 			// Handle broadcasting messages to clients
 			if msg.Channel == nil {
 				// Broadcast message to all clients if no channel is specified
 				for _, client := range s.clients {
-					if msg.SenderID != client.ID { // Avoid sending the message back to the sender if any is provided
+					if msg.SenderName != client.GetUsername() {
 						client.SendMessage(formattedMsg)
 					}
 				}
 				continue
 			}
 
+			// Broadcast to channel members
 			for _, member := range msg.Channel.members {
-				if msg.SenderID != member.ID { // Avoid sending the message back to the sender if any is provided
+				if msg.SenderName != member.GetUsername() {
 					member.SendMessage(formattedMsg)
 				}
 			}
@@ -256,29 +242,30 @@ func (s *Server) Start() {
 	s.logger.Info("Shutting down server...")
 	listener.Close()
 
-	s.broadcastMessage(nil, nil, "Server is shutting down. Disconnecting...", true)
+	s.broadcastMessage(nil, nil, "Server is shutting down. Disconnecting...")
 
 	close(s.shutdown) // Signal shutdown to all goroutines
 	s.wg.Wait()       // Wait for all goroutines to finish
 	s.logger.Info("Server has shut down.")
 }
 
-func (s *Server) broadcastMessage(client *Client, channel *Channel, msg string, isServerMsg bool) {
-	senderName := ""
-	senderID := ""
+func (s *Server) broadcastMessage(client *Client, channel *Channel, msg string) error {
+	senderName := "Server"
 	if client != nil {
 		senderName = client.GetUsername()
-		senderID = client.ID
 	}
 
-	if isServerMsg {
-		senderName = "Server"
-	}
-
-	s.broadcast <- Message{
+	message := Message{
 		SenderName: senderName,
-		SenderID:   senderID,
 		Channel:    channel,
 		Content:    msg,
+	}
+
+	select {
+	case s.broadcast <- message:
+		return nil
+	default:
+		s.logger.Warn("Broadcast channel full, dropping message", "sender", senderName)
+		return ErrBroadcastChannelFull
 	}
 }

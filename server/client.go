@@ -12,8 +12,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"time"
-
-	"github.com/google/uuid"
 )
 
 var rateLimitMessages []string = []string{
@@ -23,14 +21,11 @@ var rateLimitMessages []string = []string{
 	"Easy there! Let's keep the chat friendly.",
 	"Whoa! Let's give others a chance to speak.",
 	"Let's keep the conversation flowing smoothly.",
-	"Patience is a virtue, especially in chat.",
 	"Let's take a breather before the next message.",
-	"Remember, good things come to those who wait.",
 	"Let's keep the chat enjoyable for everyone.",
 }
 
 type Client struct {
-	ID            string
 	IP            string // Client's IP address (used as initial key)
 	Username      atomic.Value
 	registered    atomic.Bool
@@ -45,12 +40,10 @@ type Client struct {
 }
 
 func NewClient(conn net.Conn, server *Server, name string, maxBucketSize int, bucketRate float64) *Client {
-	id := uuid.NewString()
 	// Extract IP address from connection
 	ip := conn.RemoteAddr().String()
 
 	client := &Client{
-		ID:            id,
 		IP:            ip,
 		Username:      atomic.Value{},
 		registered:    atomic.Bool{},
@@ -58,7 +51,7 @@ func NewClient(conn net.Conn, server *Server, name string, maxBucketSize int, bu
 		conn:          conn,
 		server:        server,
 		maxBucketSize: maxBucketSize,
-		send:          make(chan string, 1024), // Buffered channel to prevent blocking
+		send:          make(chan string, 1024),
 		bucketRate:    bucketRate,
 	}
 
@@ -79,16 +72,24 @@ func (c *Client) Read() {
 		c.conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
 		msg, err := reader.ReadString('\n')
 		if err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return // Connection closed
-			}
-
 			if errors.Is(err, io.EOF) {
 				// Client closed the connection
 				return
 			}
 
-			c.server.logger.Error("Error reading from client", "client_id", c.ID, "error", err)
+			var opErr *net.OpError
+			if errors.As(err, &opErr) {
+				// Connection was closed or reset by peer
+				return
+			}
+
+			// Check for timeout
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				c.server.logger.Info("Client read timeout", "username", c.GetUsername())
+				return
+			}
+
+			c.server.logger.Error("Error reading from client", "error", err)
 			return
 		}
 
@@ -103,7 +104,7 @@ func (c *Client) Read() {
 
 		if c.bucket <= 0 {
 			randIndex := rand.IntN(len(rateLimitMessages))
-			c.SendMessage(formatMessage("", "Server", fmt.Sprintf("You are being rate limited. %s", rateLimitMessages[randIndex])))
+			c.SendMessage(formatMessage("Server", fmt.Sprintf("You are being rate limited. %s", rateLimitMessages[randIndex])))
 			continue
 		}
 
@@ -113,7 +114,7 @@ func (c *Client) Read() {
 		// Check if the message contains a pipe character
 		// If it does, it's a malformed message
 		if strings.Contains(msg, "|") {
-			c.SendMessage(formatMessage("", "Server", "Malformed message. Please avoid using the '|' character."))
+			c.SendMessage(formatMessage("Server", "Malformed message. Please avoid using the '|' character."))
 			continue
 		}
 
@@ -137,12 +138,12 @@ func (c *Client) Read() {
 
 			// Wait for response
 			if err := <-response; err != nil {
-				c.SendMessage(formatMessage("", "Server", fmt.Sprintf("Failed to set username: %s", err.Error())))
+				c.SendMessage(formatMessage("Server", fmt.Sprintf("Failed to set username: %s", err.Error())))
 				continue
 			}
 
 			c.SetRegistered(true)
-			c.SendMessage(formatMessage("", "Server", fmt.Sprintf("Your username has been set to '%s'. Use /join <channel_name> to join a channel.", username)))
+			c.SendMessage(formatMessage("Server", fmt.Sprintf("Your username has been set to '%s'. Use /join <channel_name> to join a channel.", username)))
 			continue
 		}
 
@@ -151,7 +152,7 @@ func (c *Client) Read() {
 		if after, ok := strings.CutPrefix(msg, "/"); ok {
 			args := strings.Fields(after)
 			if len(args) == 0 {
-				c.SendMessage(formatMessage("", "Server", "No command provided."))
+				c.SendMessage(formatMessage("Server", "No command provided."))
 				continue // Continue listening for messages
 			}
 
@@ -166,11 +167,11 @@ func (c *Client) Read() {
 		// Regular message
 		channel := c.GetChannel()
 		if channel == nil {
-			c.SendMessage(formatMessage("", "Server", "You are not in a channel. Use /join <channel> to join one."))
+			c.SendMessage(formatMessage("Server", "You are not in a channel. Use /join <channel> to join one."))
 			continue
 		}
 
-		c.server.broadcastMessage(c, channel, msg, false)
+		c.server.broadcastMessage(c, channel, msg)
 	}
 }
 
@@ -187,11 +188,17 @@ func (c *Client) Write() {
 
 		finalMessage := append(header, []byte(msg)...)
 		if _, err := c.conn.Write(finalMessage); err != nil {
-			if errors.Is(err, net.ErrClosed) {
-				return // Connection closed
+			var opErr *net.OpError
+			if errors.As(err, &opErr) {
+				return
 			}
 
-			c.server.logger.Error("Error writing to client", "client_id", c.ID, "error", err)
+			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+				c.server.logger.Info("Client write timeout", "username", c.GetUsername())
+				return
+			}
+
+			c.server.logger.Error("Error writing to client", "error", err)
 			return
 		}
 	}
@@ -202,7 +209,10 @@ func (c *Client) SendMessage(msg string) {
 	case c.send <- msg:
 	default:
 		// If the send buffer is full, drop the message to avoid blocking
-		c.server.logger.Warn("Send buffer full, dropping message", "client_id", c.ID)
+		c.server.logger.Warn("Send buffer full, dropping message", "username", c.GetUsername())
+
+		// Close the client connection. This can occur if the client is too slow to read messages or is spamming too many messages causing buffer overflow.
+		c.conn.Close()
 	}
 }
 

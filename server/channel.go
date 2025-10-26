@@ -13,7 +13,6 @@ type Channel struct {
 }
 
 type Message struct {
-	SenderID   string
 	Channel    *Channel
 	SenderName string
 	Content    string
@@ -33,12 +32,12 @@ func (ch *Channel) AddMember(client *Client, password string) error {
 		return ErrIncorrectPassword
 	}
 
-	ch.members[client.ID] = client
+	ch.members[client.GetUsername()] = client
 	return nil
 }
 
 func (ch *Channel) RemoveMember(client *Client) {
-	delete(ch.members, client.ID)
+	delete(ch.members, client.GetUsername())
 }
 
 func (ch *Channel) RequiresPassword() bool {

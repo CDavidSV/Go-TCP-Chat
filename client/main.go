@@ -38,7 +38,6 @@ var (
 type errMsg error
 type Message struct {
 	Content    string
-	SenderID   string
 	SenderName string
 }
 
@@ -212,20 +211,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 	case Message:
 		// If the sender name is "Server", use the server style
-		// If the sender ID is "." or empty, it's a broadcast message from the server
 		// Otherwise, use or create a style for the client
-		if msg.SenderName == "Server" {
+		switch msg.SenderName {
+		case "Server":
 			m.messages = append(m.messages, serverStyle.Render("[Server]: ")+msg.Content)
-		} else if msg.SenderID == "." || msg.SenderID == "" {
+		case ".":
 			m.messages = append(m.messages, msg.Content)
-		}
-
-		if msg.SenderID != "." {
-			newStyle, ok := clients[msg.SenderID]
+		default:
+			newStyle, ok := clients[msg.SenderName]
 			if !ok {
 				// If the sender ID is not in the clients map, create a new style for it
 				newStyle = lipgloss.NewStyle().Foreground(getForegroundColor())
-				clients[msg.SenderID] = newStyle
+				clients[msg.SenderName] = newStyle
 			}
 			m.messages = append(m.messages, newStyle.Render("["+msg.SenderName+"]: ")+msg.Content)
 		}
@@ -297,7 +294,7 @@ func listener(conn net.Conn, p *tea.Program) {
 		_, err = conn.Read(body)
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
-				return // Connection closed
+				return // Connection closedz
 			}
 
 			p.Send(errMsg(fmt.Errorf("error reading from server: %w", err)))
@@ -306,20 +303,18 @@ func listener(conn net.Conn, p *tea.Program) {
 
 		// Use lipgloss to style incoming messages
 		message := string(body)
-		parts := strings.SplitN(message, "|", 3) // Expects three parts: senderID, senderName, content
+		parts := strings.SplitN(message, "|", 2) // Expects two parts: senderName, content
 
-		if len(parts) != 3 {
+		if len(parts) != 2 {
 			fmt.Println("Invalid message format, skipping:", message)
 			continue // Skip processing this message
 		}
 
-		senderID := parts[0]
-		senderName := parts[1]
-		content := parts[2]
+		senderName := parts[0]
+		content := parts[1]
 
 		p.Send(Message{
 			Content:    content,
-			SenderID:   senderID,
 			SenderName: senderName,
 		})
 	}
