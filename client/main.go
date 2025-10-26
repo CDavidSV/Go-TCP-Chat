@@ -270,7 +270,7 @@ func listener(conn net.Conn, p *tea.Program) {
 	for {
 		// Read the header first (4 bytes)
 		header := make([]byte, 4)
-		_, err := conn.Read(header)
+		_, err := io.ReadFull(conn, header)
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return // Connection closed
@@ -291,10 +291,11 @@ func listener(conn net.Conn, p *tea.Program) {
 
 		// Create a buffer to hold the incoming message
 		body := make([]byte, msgSize)
-		_, err = conn.Read(body)
+		// Use io.ReadFull to ensure all bytes are read
+		_, err = io.ReadFull(conn, body)
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
-				return // Connection closedz
+				return // Connection closed
 			}
 
 			p.Send(errMsg(fmt.Errorf("error reading from server: %w", err)))

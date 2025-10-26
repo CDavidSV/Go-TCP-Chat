@@ -186,22 +186,43 @@ func (c *Client) Write() {
 		header := make([]byte, 4)
 		binary.LittleEndian.PutUint32(header, uint32(len(msg)))
 
-		finalMessage := append(header, []byte(msg)...)
-		if _, err := c.conn.Write(finalMessage); err != nil {
-			var opErr *net.OpError
-			if errors.As(err, &opErr) {
-				return
-			}
+		// Write header first, then message body
+		if err := c.writeAll(header); err != nil {
+			c.handleWriteError(err)
+			return
+		}
 
-			if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-				c.server.logger.Info("Client write timeout", "username", c.GetUsername())
-				return
-			}
-
-			c.server.logger.Error("Error writing to client", "error", err)
+		if err := c.writeAll([]byte(msg)); err != nil {
+			c.handleWriteError(err)
 			return
 		}
 	}
+}
+
+func (c *Client) writeAll(data []byte) error {
+	totalWritten := 0
+	for totalWritten < len(data) {
+		n, err := c.conn.Write(data[totalWritten:])
+		if err != nil {
+			return err
+		}
+		totalWritten += n
+	}
+	return nil
+}
+
+func (c *Client) handleWriteError(err error) {
+	var opErr *net.OpError
+	if errors.As(err, &opErr) {
+		return
+	}
+
+	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+		c.server.logger.Info("Client write timeout", "username", c.GetUsername())
+		return
+	}
+
+	c.server.logger.Error("Error writing to client", "error", err)
 }
 
 func (c *Client) SendMessage(msg string) {
