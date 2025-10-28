@@ -37,11 +37,16 @@ type Client struct {
 	maxBucketSize int
 	bucketRate    float64 // tokens per second to refill
 	lastRequest   time.Time
+	reader        *bufio.Reader
+	writer        *bufio.Writer
 }
 
 func NewClient(conn net.Conn, server *Server, name string, maxBucketSize int, bucketRate float64) *Client {
 	// Extract IP address from connection
 	ip := conn.RemoteAddr().String()
+
+	reader := bufio.NewReader(conn)
+	writer := bufio.NewWriter(conn)
 
 	client := &Client{
 		IP:            ip,
@@ -53,6 +58,8 @@ func NewClient(conn net.Conn, server *Server, name string, maxBucketSize int, bu
 		maxBucketSize: maxBucketSize,
 		send:          make(chan string, 1024),
 		bucketRate:    bucketRate,
+		reader:        reader,
+		writer:        writer,
 	}
 
 	client.Username.Store(name)
@@ -67,10 +74,9 @@ func (c *Client) Read() {
 		c.conn.Close()
 	}()
 
-	reader := bufio.NewReader(c.conn)
 	for {
 		c.conn.SetReadDeadline(time.Now().Add(5 * time.Minute))
-		msg, err := reader.ReadString('\n')
+		msg, err := c.reader.ReadString('\n')
 		if err != nil {
 			if errors.Is(err, io.EOF) {
 				// Client closed the connection
@@ -177,6 +183,7 @@ func (c *Client) Read() {
 
 func (c *Client) Write() {
 	defer func() {
+		c.writer.Flush()
 		c.conn.Close()
 	}()
 
@@ -186,43 +193,35 @@ func (c *Client) Write() {
 		header := make([]byte, 4)
 		binary.LittleEndian.PutUint32(header, uint32(len(msg)))
 
-		// Write header first, then message body
-		if err := c.writeAll(header); err != nil {
-			c.handleWriteError(err)
+		if _, err := c.writer.Write(header); err != nil {
+			c.handleWriteError(err, "header write")
 			return
 		}
 
-		if err := c.writeAll([]byte(msg)); err != nil {
-			c.handleWriteError(err)
+		if _, err := c.writer.WriteString(msg); err != nil {
+			c.handleWriteError(err, "body write")
+			return
+		}
+
+		if err := c.writer.Flush(); err != nil {
+			c.handleWriteError(err, "flush")
 			return
 		}
 	}
 }
 
-func (c *Client) writeAll(data []byte) error {
-	totalWritten := 0
-	for totalWritten < len(data) {
-		n, err := c.conn.Write(data[totalWritten:])
-		if err != nil {
-			return err
-		}
-		totalWritten += n
-	}
-	return nil
-}
-
-func (c *Client) handleWriteError(err error) {
+func (c *Client) handleWriteError(err error, context string) {
 	var opErr *net.OpError
 	if errors.As(err, &opErr) {
 		return
 	}
 
 	if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
-		c.server.logger.Info("Client write timeout", "username", c.GetUsername())
+		c.server.logger.Info(fmt.Sprintf("Client write timeout (%s)", context), "username", c.GetUsername())
 		return
 	}
 
-	c.server.logger.Error("Error writing to client", "error", err)
+	c.server.logger.Error(fmt.Sprintf("Error writing to client (%s)", context), "error", err)
 }
 
 func (c *Client) SendMessage(msg string) {
