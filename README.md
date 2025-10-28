@@ -64,4 +64,5 @@ This allows the server to accept connections from outside the container.
 - `/members`: List members in the current channel.
 - `/channels`: List all available channels.
 - `/name <new_username>`: Change your username.
+- `/whisper <username> <message>`: Send a private message to a user.
 - `/help`: Display available commands.
