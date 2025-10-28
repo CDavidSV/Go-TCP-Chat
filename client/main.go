@@ -8,7 +8,6 @@ import (
 	"log"
 	"net"
 	"slices"
-	"strconv"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textarea"
@@ -32,6 +31,29 @@ var (
 		"/members",
 		"/clients",
 		"/whisper",
+	}
+	brightColors = []string{
+		"9",
+		"10",
+		"11",
+		"12",
+		"13",
+		"14",
+		"51",
+		"87",
+		"118",
+		"123",
+		"159",
+		"201",
+		"208",
+		"214",
+		"226",
+		"46",
+		"82",
+		"196",
+		"198",
+		"206",
+		"220",
 	}
 )
 
@@ -89,15 +111,9 @@ func initialModel(c net.Conn) model {
 }
 
 func getForegroundColor() lipgloss.Color {
-	// Gets a color based on the number of connected clients
-	colorCode := 1 + len(clients)%255
-
-	// Skips colors that are used for server and sender styles
-	if colorCode == 5 || colorCode == 2 {
-		colorCode++
-	}
-
-	return lipgloss.Color(strconv.Itoa(colorCode))
+	// Gets a color from the list based on the number of connected clients
+	colorIndex := len(clients) % len(brightColors)
+	return lipgloss.Color(brightColors[colorIndex])
 }
 
 func (m model) Init() tea.Cmd {
