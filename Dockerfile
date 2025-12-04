@@ -11,4 +11,4 @@ RUN go build -o /tcp-chat ./server
 
 EXPOSE 3000
 
-CMD ["/tcp-chat"]
+CMD ["/tcp-chat", "-host", "0.0.0.0"]

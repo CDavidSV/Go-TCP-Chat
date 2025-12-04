@@ -1,6 +1,6 @@
 # Go-TCP-Chat
 
-Go-TCP-Chat is a TCP-based chat application implemented in Golang. It supports multiple clients, chat rooms, and various commands for an interactive chatting experience.
+Go-TCP-Chat is a TCP-based chat application implemented in Golang. It supports multiple clients, chat rooms, and various commands.
 
 ## Features
 - **Chat Rooms**: Users can create and join chat rooms.
@@ -27,6 +27,10 @@ Go-TCP-Chat is a TCP-based chat application implemented in Golang. It supports m
    ```bash
    ./server
    ```
+   You can also configure the host and port using flags:
+   ```bash
+   ./server -host 0.0.0.0 -port 8080
+   ```
 5. **Run the Client**:
    ```bash
    ./client
@@ -43,19 +47,6 @@ Go-TCP-Chat is a TCP-based chat application implemented in Golang. It supports m
    ```
 3. **Connect Clients**:
    Use the client application to connect to `localhost:3000`.
-
-### Important Note for Docker
-
-When running the server in Docker, ensure that the server binds to `0.0.0.0` instead of `localhost`. Update the `main.go` file in the `server` directory as follows:
-
-```go
-func main() {
-    server := NewServer("0.0.0.0", "3000")
-    server.Start()
-}
-```
-
-This allows the server to accept connections from outside the container.
 
 ## Commands
 - `/join <channel_name>`: Join or create a channel.
