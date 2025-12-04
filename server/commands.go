@@ -111,7 +111,7 @@ func listChannels(name string, args []string, client *Client, server *Server) {
 	for channelName, channel := range server.channels {
 		channelNames = append(channelNames, channelName+fmt.Sprintf(" (%d)", len(channel.members)))
 	}
-	client.SendMessage(formatMessage("", fmt.Sprintf("Available channels: \n%s", strings.Join(channelNames, ","))))
+	client.SendMessage(formatMessage("", fmt.Sprintf("Available channels: \n%s", strings.Join(channelNames, "\n"))))
 }
 
 func changeName(name string, args []string, client *Client, server *Server) {
